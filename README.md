@@ -76,9 +76,9 @@ can change scale while it is still free.
 
 1. **Reads the command** — style/theme, how many buildings, how many props,
    anything you named specifically.
-2. **Invents a catalog** of element ideas — one line each, open-ended, not from
+2. **Invents a plan** of element ideas — one line each, open-ended, not from
    a fixed list — plus any extra colours the theme needs.
-3. **Validates the catalog** before spawning anything. Structural faults reject
+3. **Validates the plan** before spawning anything. Structural faults reject
    outright; quality faults (every building the same height, ideas too thin to
    design from, too few props) are reported to fix first. Fanning out is the
    expensive step, so this is the last cheap moment to catch a mistake.
@@ -88,6 +88,35 @@ can change scale while it is still free.
    alternating sides, props on the strip between kerb and facade, road tiled to
    span the frontage.
 6. **Builds everything in one call** and screenshots it.
+
+### Run folders
+
+Each generator run keeps its working files under `city-runs/<run>/`:
+
+```
+city-runs/canal-street/
+├── plan.json          the invented ideas
+├── designed/*.json    one spec per element, as written by the subagents
+└── packed.json        everything, positioned
+```
+
+This is what makes a city reproducible. Designing is the expensive step — a
+six-element street cost roughly 345k tokens of subagent work — so the results
+are kept rather than thrown away. To rebuild exactly, or after editing one
+element:
+
+```bash
+python3 .claude/skills/unity-city-element/scripts/build_element.py \
+    city-runs/canal-street/packed.json --replace --preview Screenshots/city.png
+```
+
+Re-running the generator invents a *different* city, so never use it to fix one
+building. `city-runs/` is gitignored and lives outside `Assets/` so Unity
+doesn't import it.
+
+Note the two different "catalogs": the **recipe catalog** shipped with
+`unity-city-designer` is fixed and reused on every run, while a run's
+`plan.json` is invented fresh each time.
 
 Parallelism is in the *designing*. Building is one call because the Unity Editor
 is single-threaded — concurrent builds gain nothing and race on material assets.
@@ -115,16 +144,17 @@ python3 $B spec.json --replace --save # rebuild in place and persist
 Exit codes: `0` built · `1` spec refused · `2` unreadable spec · `3` no Editor ·
 `4` build failed partway.
 
-Checking a catalog before spawning agents, and packing the results afterwards:
+Checking a plan before spawning agents, and packing the results afterwards:
 
 ```bash
-python3 .claude/skills/unity-city-generator/scripts/validate_catalog.py \
-    catalog.json --buildings 8 --props 8 --check-scene
+R=city-runs/<run>
+python3 .claude/skills/unity-city-generator/scripts/validate_plan.py \
+    $R/plan.json --buildings 8 --props 8 --check-scene
 python3 .claude/skills/unity-city-generator/scripts/pack_layout.py \
-    designed.json -o packed.json [--origin-x 0]
+    $R/designed.json -o $R/packed.json [--origin-x 0]
 ```
 
-`validate_catalog.py` exits 1 on structural faults (duplicate names, bad kind,
+`validate_plan.py` exits 1 on structural faults (duplicate names, bad kind,
 missing footprint, two roads, a count that doesn't match what was asked for, a
 name already used in the scene) and 0 with warnings on quality ones.
 
@@ -266,7 +296,7 @@ ends up inside the geometry.
 ├── unity-city-generator/
 │   ├── SKILL.md                     read command, invent catalog, fan out, build
 │   └── scripts/
-│       ├── validate_catalog.py      check the catalog before spawning agents
+│       ├── validate_plan.py         check the plan before spawning agents
 │       └── pack_layout.py           assign positions from real footprints
 ├── unity-city-designer/
 │   ├── SKILL.md                     decompose, proportion, colour, layout

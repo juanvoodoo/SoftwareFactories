@@ -1,6 +1,6 @@
 ---
 name: unity-city-generator
-description: Generate a whole block of city in Unity from a single command — invent a catalog of varied building and prop ideas, design them all in parallel, lay them out as a street and build them in one pass. Use this whenever someone asks to generate, populate, fill, block out or create a city, town, street, block, neighbourhood or district rather than one specific object, or says something as short as "make me a city". Takes a style or theme and how many of each thing to build, in free text — "run-down industrial canal street, 10 buildings and lots of street furniture", "coastal old town, just three houses" — and defaults to 8 buildings and 8 props when unspecified. For a single named element use unity-city-designer instead.
+description: Generate a whole block of city in Unity from a single command — invent a plan of varied building and prop ideas, design them all in parallel, lay them out as a street and build them in one pass. Use this whenever someone asks to generate, populate, fill, block out or create a city, town, street, block, neighbourhood or district rather than one specific object, or says something as short as "make me a city". Takes a style or theme and how many of each thing to build, in free text — "run-down industrial canal street, 10 buildings and lots of street furniture", "coastal old town, just three houses" — and defaults to 8 buildings and 8 props when unspecified. For a single named element use unity-city-designer instead.
 ---
 
 # Unity city generator
@@ -14,8 +14,8 @@ in a single pass**.
 /unity-city-generator [style/theme] [counts]
    │
    ├─ 0. read the command                   (style, how many of what)
-   ├─ 1. invent a catalog of ideas          (this skill)
-   ├─ 2. validate the catalog               (validate_catalog.py) ← before any agent
+   ├─ 1. invent a plan of ideas             (this skill)
+   ├─ 2. validate the plan                  (validate_plan.py) ← before any agent
    ├─ 3. one subagent per idea, concurrent  (each uses unity-city-designer)
    ├─ 4. pack the designed shapes           (pack_layout.py)
    └─ 5. build everything in one call       (build_element.py)
@@ -37,7 +37,7 @@ Take from their words:
 | **Style / theme** | Any free text — "run-down industrial canal street", "coastal old town", "1980s Tokyo back street". Drives every idea and the extra palette. |
 | **How many buildings** | "8 buildings", "a dozen blocks", "just three". |
 | **How many props** | "lots of street furniture", "keep it bare". |
-| **Anything specific they named** | "there must be a church" — put it in the catalog verbatim. |
+| **Anything specific they named** | "there must be a church" — put it in the plan verbatim. |
 
 Defaults when they didn't say, so a bare `/unity-city-generator` still works:
 **8 buildings, 8 props, 1 road, contemporary generic city.** State the numbers
@@ -47,13 +47,27 @@ any agent runs — that is the last cheap moment to change scale.
 Counts are not a detail. They set how many subagents get spawned, which is
 where nearly all the cost of a run lives.
 
-## 1. Invent the catalog
+## 1. Invent the plan
 
 This is the creative step, and it is deliberately **not** a menu. Invent ideas
 that would plausibly share a street, given whatever theme the user gave (or a
 generic contemporary city if they gave none).
 
-Write `catalog.json` to a scratch path:
+Everything this run produces lives in one folder, so the city can be rebuilt or
+tweaked later without paying for the design agents again. Pick a short slug from
+the theme and create `city-runs/<run>/`:
+
+```
+city-runs/canal-street/
+├── plan.json          the ideas (this step)
+├── designed/*.json    one spec per element (step 3)
+└── packed.json        everything, positioned (step 4)
+```
+
+`city-runs/` is gitignored — these are working files, not project sources, and
+they stay out of `Assets/` so Unity doesn't import them as TextAssets.
+
+Write `city-runs/<run>/plan.json`:
 
 ```json
 {"theme": "post-war European high street",
@@ -73,7 +87,7 @@ Each entry needs only: a unique `name`, a `kind` of `building`, `prop` or
 `footprint_m` / `height_m` so the layout can reserve space.
 
 **Declare the theme's extra colors in `palette` up front.** The standard palette
-in the designer's catalog covers ordinary city materials; a theme usually needs
+in the designer's recipe catalog covers ordinary city materials; a theme usually needs
 a few more — rust, soot, neon, moss. Decide them here and pass them to every
 subagent, because designers run concurrently and cannot see each other's
 choices. Left to themselves, three of them will invent three different rusts,
@@ -97,11 +111,11 @@ kiosks, bollards.
 The road entry is a 20 m tile prototype that gets cloned to span the block, so
 describe one segment, not the whole street.
 
-## 2. Validate the catalog before spending agents
+## 2. Validate the plan before spending agents
 
 ```bash
-python3 .claude/skills/unity-city-generator/scripts/validate_catalog.py \
-    catalog.json --buildings <n> --props <n> --check-scene
+python3 .claude/skills/unity-city-generator/scripts/validate_plan.py \
+    city-runs/<run>/plan.json --buildings <n> --props <n> --check-scene
 ```
 
 Run this every time, with no exceptions. Fanning out is the expensive step, and
@@ -111,7 +125,7 @@ which would otherwise surface as `name_taken` after every agent had finished.
 
 **Errors (exit 1) mean spawn nothing.** Duplicate or malformed names, a bad
 `kind`, a missing footprint, two roads, a count that doesn't match what the user
-asked for. Fix the catalog and re-validate.
+asked for. Fix the plan and re-validate.
 
 **Warnings are about whether the street will be any good**, and they are usually
 worth acting on before spending agents rather than after seeing the preview:
@@ -121,7 +135,7 @@ designer given two words produces two words' worth of building), `few_props`,
 
 ## 3. Design every element in parallel
 
-Spawn one subagent per catalog entry, all in a single message so they run
+Spawn one subagent per plan entry, all in a single message so they run
 concurrently. Give each exactly this brief, filled in:
 
 ```
@@ -133,7 +147,7 @@ Target footprint: <w> x <d> m, height about <h> m
 
 Theme: <theme>
 Theme palette — use these exact roles and hex values for these materials:
-<the catalog's palette block>
+<the plan's palette block>
 
 Method and the standard palette:
   .claude/skills/unity-city-designer/SKILL.md
@@ -151,6 +165,8 @@ Verify with:
 and fix anything it refuses before you finish.
 ```
 
+Point each subagent at `city-runs/<run>/designed/<Name>.json`.
+
 Have each subagent **write a file** rather than return JSON in prose — parsing
 a file is reliable, parsing a report is not. Tell it to dry-run its own work:
 that check is free, needs no Editor, and means a bad element is caught by the
@@ -158,14 +174,15 @@ agent that made it rather than surfacing at the end.
 
 ## 4. Pack and build
 
-Merge the per-element files into `{"elements": [...]}`, keeping each entry's
-`kind`, then:
+Merge `designed/*.json` into `{"elements": [...]}`, keeping each entry's `kind`,
+then:
 
 ```bash
+R=city-runs/<run>
 python3 .claude/skills/unity-city-generator/scripts/pack_layout.py \
-    designed.json -o packed.json
+    $R/designed.json -o $R/packed.json
 python3 .claude/skills/unity-city-element/scripts/build_element.py \
-    packed.json --preview Screenshots/city.png
+    $R/packed.json --preview Screenshots/city.png
 ```
 
 The packer assigns every position: buildings alternate sides of the street with
@@ -186,8 +203,20 @@ for judging spacing and variety — exactly what can go wrong here. Ask whether
 the block reads as a street and whether the buildings look like different
 buildings.
 
-To fix one element, re-run its subagent, re-pack and rebuild with `--replace`.
-Re-running the whole generator produces a different city, which is usually not
-what someone wants after reviewing one.
+**Rebuilding or changing a past run** is why the folder is kept. Everything is
+already on disk, so none of it needs agents again:
+
+```bash
+R=city-runs/<run>
+B=.claude/skills/unity-city-element/scripts/build_element.py
+python3 $B $R/packed.json --replace --preview Screenshots/city.png
+```
+
+To change one element, edit its file in `designed/`, re-pack and rebuild — or
+re-run just that one subagent. To extend the block, add entries to `plan.json`,
+design only the new ones, and pack with `--origin-x` past the existing frontage.
+
+Never re-run the whole generator to fix one building: it invents a *different*
+city, and discards work you have already paid for.
 
 **Nothing is saved unless asked.** Pass `--save` only when the user says so.

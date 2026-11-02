@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check a generated catalog BEFORE any design subagent is spawned.
+"""Check a generated plan BEFORE any design subagent is spawned.
 
 Fanning out is the expensive step: N concurrent agents, each reading skills and
 writing a spec. Every fault caught here costs nothing, and the same fault found
@@ -9,12 +9,12 @@ It checks two different kinds of thing:
 
   errors   - structural faults that would break the pipeline downstream
              (duplicate names, bad kinds, missing footprints, a name already
-             taken in the scene). Exit 1; spawn nothing; fix the catalog.
+             taken in the scene). Exit 1; spawn nothing; fix the plan.
   warnings - quality faults that would produce a dull or unconvincing street
              (every building the same height, ideas too thin to design from,
              no props). Exit 0, but worth revising before spending agents.
 
-  validate_catalog.py catalog.json [--buildings N] [--props N] [--check-scene]
+  validate_plan.py city-runs/<run>/plan.json [--buildings N] [--props N] [--check-scene]
 """
 import argparse, json, os, re, subprocess, sys
 
@@ -41,7 +41,7 @@ def scene_roots():
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("catalog")
+    ap.add_argument("plan")
     ap.add_argument("--buildings", type=int, default=None,
                     help="how many buildings the user asked for")
     ap.add_argument("--props", type=int, default=None)
@@ -59,20 +59,20 @@ def main():
         warnings.append({"code": code, "message": msg})
 
     try:
-        cat = json.load(open(args.catalog))
+        plan = json.load(open(args.plan))
     except (OSError, json.JSONDecodeError) as exc:
-        print(f"error: cannot read catalog: {exc}", file=sys.stderr)
+        print(f"error: cannot read plan: {exc}", file=sys.stderr)
         return 2
 
-    elements = cat.get("elements")
+    elements = plan.get("elements")
     if not isinstance(elements, list) or not elements:
-        err("no_elements", "catalog has no 'elements' list")
+        err("no_elements", "plan has no 'elements' list")
         elements = []
 
-    if not cat.get("theme"):
+    if not plan.get("theme"):
         warn("no_theme", "no 'theme' recorded; designers lose the one piece of "
                          "shared context that keeps elements coherent")
-    if not cat.get("palette"):
+    if not plan.get("palette"):
         warn("no_palette", "no 'palette' declared. Designers run concurrently "
                            "and cannot see each other, so each will invent its "
                            "own rust/soot/neon and the shared palette splits")
@@ -88,7 +88,7 @@ def main():
             err("bad_name", f"{name}: use letters, digits and underscores, "
                             f"starting with a letter (it becomes a GameObject)")
         if name in seen:
-            err("duplicate_name", f"{name}: appears twice in the catalog")
+            err("duplicate_name", f"{name}: appears twice in the plan")
         seen[name] = True
         if name in RESERVED:
             err("reserved_name", f"{name}: collides with a default scene object")
@@ -136,10 +136,10 @@ def main():
     nb, np_ = len(kinds["building"]), len(kinds["prop"])
     if args.buildings is not None and nb != args.buildings:
         err("wrong_building_count",
-            f"{args.buildings} buildings were asked for, catalog has {nb}")
+            f"{args.buildings} buildings were asked for, plan has {nb}")
     if args.props is not None and np_ != args.props:
         err("wrong_prop_count",
-            f"{args.props} props were asked for, catalog has {np_}")
+            f"{args.props} props were asked for, plan has {np_}")
 
     # --- quality: the things that make a street dull rather than broken ---
     if not kinds["road"]:
@@ -184,7 +184,7 @@ def main():
         for w in warnings:
             print(f"warning  [{w['code']}] {w['message']}", file=sys.stderr)
         if not errors:
-            print(f"catalog ok: {nb} buildings, {np_} props, "
+            print(f"plan ok: {nb} buildings, {np_} props, "
                   f"{len(kinds['road'])} road"
                   + (f", {len(warnings)} warning(s) to consider"
                      if warnings else ""))
