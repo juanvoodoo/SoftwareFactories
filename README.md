@@ -248,7 +248,15 @@ builds with the existing one and warns `material_color_ignored`.
 
 The standard palette lives in
 `.claude/skills/unity-city-designer/references/catalog.md`, alongside twelve
-validated element recipes.
+validated element breakdowns.
+
+Those twelve are **worked examples, not a menu** — they show how a good spec is
+assembled, and are reliable starting points when a request matches one. They do
+not limit what can be built: in the canal-street test, six subagents produced 83
+parts of which only 11 shared a name with any example, inventing sawtooth
+clerestories, per-floor balcony bands, security shutters and rust patches. The
+palette, by contrast, *is* meant to constrain — shared colour roles are what
+make separate elements read as one city.
 
 ---
 

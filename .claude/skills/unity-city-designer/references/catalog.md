@@ -1,8 +1,17 @@
 # Element catalog
 
-Worked part-breakdowns for common city elements. Every recipe here has been
-validated against the builder, so the numbers are known-good starting points —
-adapt dimensions and colors freely, keep the structure.
+Two things live here, used in opposite ways.
+
+**The standard palette is authoritative** — reuse those roles and hex values so
+separate elements read as one city.
+
+**The twelve breakdowns below are worked examples, not a menu.** They are
+validated against the builder, so they are reliable starting points when a
+request matches one. When it doesn't — and most won't — design the thing that
+was asked for, using these only as a reference for *how* a spec is put
+together: how parts split on material boundaries, what proportions read
+correctly, how detail is kept slightly proud of its host. Anything buildable
+from six primitives is in scope, whether or not it appears below.
 
 Contents: [Standard palette](#standard-palette) · [corner-shop](#corner-shop) ·
 [mid-rise](#mid-rise) · [office-tower](#office-tower) · [house](#house) ·

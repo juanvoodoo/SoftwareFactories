@@ -18,10 +18,15 @@ unity-city-element skill. Everything needed is in the command: `--schema`
 prints the contract, and refusals name what to fix. Loading that skill as well
 just costs tokens for information you already have below.
 
-Read `references/catalog.md` before designing anything. It holds validated
-part-breakdowns for twelve common elements and the standard palette — adapting
-one is faster and better than inventing from scratch, and reusing palette roles
-is what makes separate props read as one city.
+`references/catalog.md` holds two different things, used in opposite ways:
+
+- **The standard palette** — shared colour roles. Use it. Reusing roles is what
+  makes separate elements read as one city rather than a pile of props, and the
+  builder shares materials by role name, so reuse costs nothing.
+- **Twelve worked examples** — complete, validated breakdowns of common
+  elements. These are *patterns, not a menu*. They show what a good spec looks
+  like: how parts are split, what proportions read correctly, how detail is
+  kept proud of its host. They do not limit what you can build.
 
 ## Build it
 
@@ -37,9 +42,15 @@ Run `python3 $B --schema` if you need the exact spec contract. Useful flags:
 
 ## Designing one element
 
-**Start from the catalog.** If the request names something in it, copy that
-recipe and adjust dimensions and colors. If it's something new, build it the
-same way the catalog entries are built.
+**Design whatever was actually asked for.** Most requests will not match one of
+the twelve examples, and that is the normal case, not a problem. A disused
+foundry with a sawtooth roof, a derelict stair tower with a water tank, a
+floating market stall — none of these are in the file, and all of them are built
+from the same six primitives by the same method.
+
+If the request does match an example, adapting it is quicker and already
+validated, so do that. Otherwise read one or two as a reference for *how* a
+spec is assembled, then design the thing in front of you.
 
 **A part is one primitive with one color.** Split on material boundaries, not
 just geometry: a wall and its windows are separate parts because they're
@@ -86,7 +97,7 @@ bench against a wall.
 build the frontages off them. Three numbers matter, and getting them wrong is
 what makes a street look like buildings dumped in a field:
 
-- **Tile the road to cover the whole frontage.** The catalog segment is 20 m;
+- **Tile the road to cover the whole frontage.** The example segment is 20 m;
   place several end to end (at x = -10, +10, +30 …) so no building faces bare
   ground. Segments that merely touch don't trigger an overlap warning.
 - **Set facades back ~4–5 m from the outer kerb edge**, not 1–2 m. That strip is
@@ -131,8 +142,8 @@ its host (glass panels a hair outside the wall) so it reads crisply.
    structural fault before the Editor is touched.
 2. Build with `--preview`, then **open the screenshot and look at it.**
    Validation proves the geometry is possible; only the image tells you whether
-   a tower looks squat or two colors mush together. For a catalog element with
-   only dimensional tweaks, validation alone is enough.
+   a tower looks squat or two colors mush together. For an element adapted from
+   a worked example with only dimensional tweaks, validation alone is enough.
 
    A layout is previewed from near overhead, because at any street-level angle
    the nearest frontage hides everything behind it — and what you're checking in
