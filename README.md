@@ -38,19 +38,219 @@ costs no more than a single skill would.
 | `unity-city-designer` | What one element looks like | A spec |
 | `unity-city-element` | Nothing — it builds | Geometry in the scene |
 
-```
-"make me a city"          → unity-city-generator ─┐
-                                                  ├→ unity-city-designer → spec
-"add a corner shop"       → unity-city-designer ──┘                         │
-                                                                            ▼
-"build this spec file"    → ────────────────────────────→ unity-city-element
+```mermaid
+flowchart LR
+    R1["&quot;make me a city&quot;"] --> G["unity-city-generator"]
+    R2["&quot;add a corner shop&quot;"] --> D["unity-city-designer"]
+    R3["&quot;build this spec file&quot;"] --> E["unity-city-element"]
+    G --> D --> E --> SC["scene"]
 ```
 
-The hand-off between layers is a **JSON file and a shell command**, not a skill
-invocation. A designer agent runs `build_element.py` directly; it never loads
-the builder's own documentation.
+That table answers *which skill handles which request*. For how a run actually
+executes — what happens in parallel, what cannot — see below.
 
 ---
+
+## How the flow works
+
+The thing worth understanding is **which parts run at the same time and which
+cannot**, because that decides both how long a run takes and what can go wrong
+in it.
+
+### Who loads what
+
+Only one skill is in context at a time. Layers hand off through files and shell
+commands, never by invoking each other as skills.
+
+```mermaid
+flowchart TD
+    U["you — &quot;make me a city&quot;"] --> G
+
+    subgraph L1["loaded once"]
+        G["<b>unity-city-generator</b><br/>orchestrator — invents the plan,<br/>fans out, packs, builds"]
+    end
+
+    G -->|"spawns N subagents"| D
+
+    subgraph L2["loaded N times — once per agent"]
+        D["<b>unity-city-designer</b><br/>method + palette — how to turn<br/>one idea into a spec"]
+    end
+
+    D -->|"runs it, never loads it"| B
+
+    subgraph L3["never in context — only executed"]
+        B["<b>build_element.py</b><br/>validator + builder —<br/>--schema prints the contract"]
+    end
+
+    B --> S["the open Unity scene"]
+```
+
+`unity-city-element/SKILL.md` is documentation for *you*. The pipeline never
+reads it, which is why a build costs no skill tokens at all.
+
+### The pipeline
+
+```mermaid
+flowchart TD
+    S0["<b>0 — read the command</b><br/>style, counts, anything named"]
+    S1["<b>1 — invent the plan</b><br/>→ plan.json"]
+    S2{"<b>2 — validate the plan</b><br/>validate_plan.py"}
+    STOP["spawn nothing<br/>fix the plan, revalidate"]
+
+    S0 --> S1 --> S2
+    S2 -->|"exit 1 — structural fault"| STOP
+    STOP -.->|"retry, still free"| S1
+    S2 -->|"exit 0"| FAN
+
+    subgraph FAN["<b>3 — design — ALL AT ONCE, each agent blind to the others</b>"]
+        direction LR
+        A1["agent 1<br/>Streetlight_N"]
+        A2["agent 2<br/>OfficeTower"]
+        A3["…"]
+        A17["agent 17<br/>BrickWarehouse"]
+    end
+
+    FAN --> S4["<b>4 — pack</b><br/>pack_layout.py assigns every position<br/>→ packed.json"]
+    S4 --> S5["<b>5 — build</b><br/>ONE call, 220 parts"]
+    S5 --> S6["<b>6 — preview</b><br/>→ Screenshots/city.png"]
+
+    style S2 fill:#fde68a,stroke:#b45309,color:#000
+    style FAN fill:#dbeafe,stroke:#1d4ed8,color:#000
+    style STOP fill:#fecaca,stroke:#b91c1c,color:#000
+```
+
+Step 2 is the **last cheap moment**. Everything before it costs almost nothing;
+everything after is paid per element.
+
+### Measured timeline
+
+The 17-element run kept in `city-runs/downtown-block/`:
+
+```mermaid
+gantt
+    title 17-element run — wall clock
+    dateFormat X
+    axisFormat %M:%S
+
+    section Orchestrator
+    read command and invent plan :done, q1, 0, 2
+    validate plan               :crit, q2, 2, 3
+
+    section Design agents (parallel)
+    StreetTree_N                :active, a1,  3, 31
+    Streetlight_E               :active, a2,  3, 32
+    Streetlight_W               :active, a3,  3, 41
+    LitterBin                   :active, a4,  3, 42
+    CityRoad                    :active, a5,  3, 48
+    BenchPair                   :active, a6,  3, 48
+    StreetTree_S                :active, a7,  3, 57
+    OfficeTower                 :active, a8,  3, 66
+    CornerCafe                  :active, a9,  3, 75
+    CityHotel                   :active, a10, 3, 78
+    BusShelter                  :active, a11, 3, 79
+    ParkingDeck                 :active, a12, 3, 82
+    OldChapel                   :active, a13, 3, 91
+    CivicLibrary                :active, a14, 3, 95
+    CycleStand                  :active, a15, 3, 97
+    ApartmentBlock              :active, a16, 3, 102
+    BrickWarehouse              :active, a17, 3, 138
+
+    section Orchestrator
+    pack                        :done, q3, 138, 139
+    build 220 parts             :crit, q4, 139, 299
+    preview                     :done, q5, 299, 303
+```
+
+**19.2 minutes of design work in 2.3 minutes of wall clock** — about 8.5× — for
+roughly 1M tokens. That ratio is the entire reason the fan-out exists. Note also
+that the single build call takes longer than all but the slowest agent.
+
+### Why designing is parallel but building is not
+
+```mermaid
+flowchart LR
+    subgraph P["DESIGNING — real speedup"]
+        direction TB
+        d1["agent 1"]
+        d2["agent 2"]
+        d3["agent N"]
+        note1["no shared state<br/>nothing to collide<br/>never touches Unity"]
+    end
+
+    subgraph Q["BUILDING — no speedup available"]
+        direction TB
+        q1["Unity Editor<br/>ONE main thread"]
+        note2["commands queue and run<br/>one after another, whoever<br/>sends them. Concurrent<br/>material creation races."]
+    end
+
+    P ==>|"specs on disk"| Q
+
+    style P fill:#dbeafe,stroke:#1d4ed8,color:#000
+    style Q fill:#fed7aa,stroke:#c2410c,color:#000
+```
+
+So agents never touch the Editor. They self-check with
+`build_element.py --dry-run`, which needs no Editor at all, and the single build
+call at the end is the only thing that talks to it.
+
+### What each step hands to the next
+
+```mermaid
+flowchart TD
+    plan["<b>plan.json</b><br/>ideas, counts, theme palette"]
+    val["validate_plan.py"]
+    agents["N agents — parallel"]
+    specs["<b>designed/&lt;Name&gt;.json</b><br/>shape only, NO position"]
+    merged["<b>designed.json</b><br/>merged, each keeps its kind"]
+    pack["pack_layout.py"]
+    packed["<b>packed.json</b><br/>positions assigned"]
+    build["build_element.py"]
+    scene["open scene<br/>+ Screenshots/city.png"]
+
+    plan --> val
+    val -->|"exit 0"| agents
+    agents --> specs --> merged --> pack --> packed --> build --> scene
+    plan -.->|"same palette to every agent,<br/>so colours stay coherent"| agents
+```
+
+Everything except the scene itself lives in `city-runs/<run>/`, so a city can be
+rebuilt or edited later without paying for the agents again.
+
+### Why agents never choose a position
+
+They run concurrently, so no agent can see where the others put anything.
+Letting each pick its own spot would mean collisions nobody detects.
+
+```mermaid
+flowchart LR
+    A1["agent 1"] --> SH
+    A2["agent 2"] --> SH
+    AN["agent N"] --> SH
+    SH["shapes,<br/>no positions"] --> PK["pack_layout.py"]
+    PK --> R1["facades on a common line"]
+    PK --> R2["alternating sides of the street"]
+    PK --> R3["props on the kerb-to-facade strip"]
+    PK --> R4["road tiled to span the frontage"]
+```
+
+`pack_layout.py` takes footprints from `build_element.py --dry-run` — the same
+code that will place the geometry — so what is packed is exactly what gets built.
+
+Sequential agents *could* each read the scene and place themselves, but that
+forces the whole run to be serial — N scene reads and N builds instead of one —
+to solve a problem footprints already solve.
+
+### The single-element path
+
+Asking for one thing skips the orchestration entirely. No subagents, no packing,
+nothing parallel:
+
+```mermaid
+flowchart LR
+    U["&quot;add a corner shop&quot;"] --> D["unity-city-designer<br/>decides + writes spec"]
+    D --> B["build_element.py<br/>validates + builds"]
+    B --> S["scene + preview"]
+```
 
 ## Using it
 
