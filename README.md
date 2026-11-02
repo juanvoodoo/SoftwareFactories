@@ -64,18 +64,30 @@ what to change.
 
 ### A whole block
 
-> "/unity-city-generator run-down industrial canal street, 8 buildings"
+> "/unity-city-generator run-down industrial canal street, 10 buildings and
+> lots of street furniture"
+
+Style and counts come from your words — any free text works. With nothing
+specified it defaults to **8 buildings, 8 props, 1 road, contemporary generic
+city**, and states the numbers it settled on before spawning anything, so you
+can change scale while it is still free.
 
 `unity-city-generator`:
 
-1. **Invents a catalog** of element ideas — one line each, open-ended, not from
+1. **Reads the command** — style/theme, how many buildings, how many props,
+   anything you named specifically.
+2. **Invents a catalog** of element ideas — one line each, open-ended, not from
    a fixed list — plus any extra colours the theme needs.
-2. **Spawns one subagent per idea**, all concurrently. Each designs a shape and
+3. **Validates the catalog** before spawning anything. Structural faults reject
+   outright; quality faults (every building the same height, ideas too thin to
+   design from, too few props) are reported to fix first. Fanning out is the
+   expensive step, so this is the last cheap moment to catch a mistake.
+4. **Spawns one subagent per idea**, all concurrently. Each designs a shape and
    writes a JSON file. They never choose a position and never touch Unity.
-3. **Packs the designed shapes** into a street: facades on a common line,
+5. **Packs the designed shapes** into a street: facades on a common line,
    alternating sides, props on the strip between kerb and facade, road tiled to
    span the frontage.
-4. **Builds everything in one call** and screenshots it.
+6. **Builds everything in one call** and screenshots it.
 
 Parallelism is in the *designing*. Building is one call because the Unity Editor
 is single-threaded — concurrent builds gain nothing and race on material assets.
@@ -103,12 +115,18 @@ python3 $B spec.json --replace --save # rebuild in place and persist
 Exit codes: `0` built · `1` spec refused · `2` unreadable spec · `3` no Editor ·
 `4` build failed partway.
 
-Packing designed elements into a street:
+Checking a catalog before spawning agents, and packing the results afterwards:
 
 ```bash
+python3 .claude/skills/unity-city-generator/scripts/validate_catalog.py \
+    catalog.json --buildings 8 --props 8 --check-scene
 python3 .claude/skills/unity-city-generator/scripts/pack_layout.py \
     designed.json -o packed.json [--origin-x 0]
 ```
+
+`validate_catalog.py` exits 1 on structural faults (duplicate names, bad kind,
+missing footprint, two roads, a count that doesn't match what was asked for, a
+name already used in the scene) and 0 with warnings on quality ones.
 
 ---
 
@@ -246,8 +264,10 @@ ends up inside the geometry.
 ```
 .claude/skills/
 ├── unity-city-generator/
-│   ├── SKILL.md                     invent a catalog, fan out, pack, build
-│   └── scripts/pack_layout.py       assign positions from real footprints
+│   ├── SKILL.md                     read command, invent catalog, fan out, build
+│   └── scripts/
+│       ├── validate_catalog.py      check the catalog before spawning agents
+│       └── pack_layout.py           assign positions from real footprints
 ├── unity-city-designer/
 │   ├── SKILL.md                     decompose, proportion, colour, layout
 │   └── references/catalog.md        12 validated recipes + standard palette

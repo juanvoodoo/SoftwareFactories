@@ -1,6 +1,6 @@
 ---
 name: unity-city-generator
-description: Generate a whole block of city in Unity from a single command — invent a catalog of varied building and prop ideas, design them all in parallel, lay them out as a street and build them in one pass. Use this whenever someone asks to generate, populate, fill, block out or create a city, town, street, block, neighbourhood or district rather than one specific object, or says something as short as "make me a city". Optional arguments are a theme and a count, e.g. "coastal old town, 8 buildings". For a single named element use unity-city-designer instead.
+description: Generate a whole block of city in Unity from a single command — invent a catalog of varied building and prop ideas, design them all in parallel, lay them out as a street and build them in one pass. Use this whenever someone asks to generate, populate, fill, block out or create a city, town, street, block, neighbourhood or district rather than one specific object, or says something as short as "make me a city". Takes a style or theme and how many of each thing to build, in free text — "run-down industrial canal street, 10 buildings and lots of street furniture", "coastal old town, just three houses" — and defaults to 8 buildings and 8 props when unspecified. For a single named element use unity-city-designer instead.
 ---
 
 # Unity city generator
@@ -11,12 +11,14 @@ element each in parallel**, and the builder **places and creates the geometry
 in a single pass**.
 
 ```
-/unity-city-generator [theme] [count]
+/unity-city-generator [style/theme] [counts]
    │
+   ├─ 0. read the command                   (style, how many of what)
    ├─ 1. invent a catalog of ideas          (this skill)
-   ├─ 2. one subagent per idea, concurrent  (each uses unity-city-designer)
-   ├─ 3. pack the designed shapes           (pack_layout.py)
-   └─ 4. build everything in one call       (build_element.py)
+   ├─ 2. validate the catalog               (validate_catalog.py) ← before any agent
+   ├─ 3. one subagent per idea, concurrent  (each uses unity-city-designer)
+   ├─ 4. pack the designed shapes           (pack_layout.py)
+   └─ 5. build everything in one call       (build_element.py)
 ```
 
 Subagents design **shape only and never a position**. They run concurrently, so
@@ -24,6 +26,26 @@ none can see the others' choices — placement is decided centrally once every
 footprint is known. This is also why building happens in one call rather than
 per agent: the Unity Editor is single-threaded, so parallel building buys no
 speed, while parallel designing buys a great deal.
+
+## 0. Read the command
+
+Everything about scale and character comes from the user, not from this file.
+Take from their words:
+
+| | |
+|---|---|
+| **Style / theme** | Any free text — "run-down industrial canal street", "coastal old town", "1980s Tokyo back street". Drives every idea and the extra palette. |
+| **How many buildings** | "8 buildings", "a dozen blocks", "just three". |
+| **How many props** | "lots of street furniture", "keep it bare". |
+| **Anything specific they named** | "there must be a church" — put it in the catalog verbatim. |
+
+Defaults when they didn't say, so a bare `/unity-city-generator` still works:
+**8 buildings, 8 props, 1 road, contemporary generic city.** State the numbers
+you settled on in one line before generating, so the user can redirect before
+any agent runs — that is the last cheap moment to change scale.
+
+Counts are not a detail. They set how many subagents get spawned, which is
+where nearly all the cost of a run lives.
 
 ## 1. Invent the catalog
 
@@ -68,14 +90,36 @@ failure of this step, and no amount of good building later fixes it. Vary:
 - **Material and era** — brick, render, concrete, glass, timber.
 - **Condition** — new, tired, boarded up, recently refitted.
 
-Include **6–10 buildings, 5–8 props and exactly one `road`** unless the user
-asked for a specific count. Props are what sell it as inhabited: lights,
-benches, bins, trees, shelters, signage, kiosks, bollards.
+Produce exactly the counts settled in step 0, plus exactly one `road`. Props
+are what sell it as inhabited: lights, benches, bins, trees, shelters, signage,
+kiosks, bollards.
 
 The road entry is a 20 m tile prototype that gets cloned to span the block, so
 describe one segment, not the whole street.
 
-## 2. Design every element in parallel
+## 2. Validate the catalog before spending agents
+
+```bash
+python3 .claude/skills/unity-city-generator/scripts/validate_catalog.py \
+    catalog.json --buildings <n> --props <n> --check-scene
+```
+
+Run this every time, with no exceptions. Fanning out is the expensive step, and
+a fault found afterwards costs a whole round of agents to redo; found here it
+costs nothing. `--check-scene` also catches a name already used in the scene,
+which would otherwise surface as `name_taken` after every agent had finished.
+
+**Errors (exit 1) mean spawn nothing.** Duplicate or malformed names, a bad
+`kind`, a missing footprint, two roads, a count that doesn't match what the user
+asked for. Fix the catalog and re-validate.
+
+**Warnings are about whether the street will be any good**, and they are usually
+worth acting on before spending agents rather than after seeing the preview:
+`flat_skyline` (every building the same height reads as a wall), `thin_idea` (a
+designer given two words produces two words' worth of building), `few_props`,
+`no_palette`. Revise unless the user asked for exactly that.
+
+## 3. Design every element in parallel
 
 Spawn one subagent per catalog entry, all in a single message so they run
 concurrently. Give each exactly this brief, filled in:
@@ -112,7 +156,7 @@ a file is reliable, parsing a report is not. Tell it to dry-run its own work:
 that check is free, needs no Editor, and means a bad element is caught by the
 agent that made it rather than surfacing at the end.
 
-## 3. Pack and build
+## 4. Pack and build
 
 Merge the per-element files into `{"elements": [...]}`, keeping each entry's
 `kind`, then:
@@ -135,7 +179,7 @@ and it refuses rather than guessing if any element is invalid.
 clear what's there. The packer prevents overlap among the elements it places,
 but it cannot see geometry built by an earlier run.
 
-## 4. Review and save
+## 5. Review and save
 
 Open the preview. A layout is shot from near overhead, which is the right view
 for judging spacing and variety — exactly what can go wrong here. Ask whether
