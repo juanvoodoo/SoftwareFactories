@@ -13,7 +13,7 @@ Ask for a building and you get one. Ask for a city and you get a street.
 - **Unity 6000.3.15f1** open on this project, with the command bridge running.
 - The `unity` CLI at `/Users/juan/.unity/bin/unity` (not on `PATH` — always call
   it by full path). Override with the `UNITY_CLI` environment variable.
-- **Python 3** for the two bundled scripts. No third-party packages.
+- **Python 3** for the three bundled scripts. No third-party packages.
 
 Check the Editor is reachable before anything else:
 
@@ -124,7 +124,10 @@ everything after is paid per element.
 
 ### Measured timeline
 
-The 17-element run kept in `city-runs/downtown-block/`:
+A 17-element run, timed end to end. (The run folder kept in this repo is the
+larger one, `city-runs/ruins/` — 72 elements, 50 buildings and 21 props of a
+post-apocalyptic street; the numbers in [Where the tokens go](#where-the-tokens-go)
+come from that one.)
 
 ```mermaid
 gantt
@@ -240,6 +243,25 @@ Sequential agents *could* each read the scene and place themselves, but that
 forces the whole run to be serial — N scene reads and N builds instead of one —
 to solve a problem footprints already solve.
 
+### Where the tokens go
+
+Ranked by what moves the bill on a real run. Everything before step 3 is
+rounding error; everything from step 3 on is paid per element.
+
+| # | Hotspot | Why it costs | What to do instead |
+|---|---|---|---|
+| 1 | **Orchestrator turn count** | Every reply re-sends the whole conversation. On the 72-element run the orchestrator spent **96.7M** tokens against the agents' **32.8M** — 3× — over 164 turns each re-reading 566k of context, largely to say "65/72 done". | Launch a full wave, stay silent, answer once when the wave lands. Check progress by listing `designed/`, never by narrating completions. |
+| 2 | **The fan-out itself** | ~446k raw tokens and 9 model calls per agent. Only **2.7%** is generated output; the rest is context mechanics. N comes straight from the counts in step 0. | State the counts in one line before spawning. That is the last cheap moment to change scale. |
+| 3 | **Re-running the generator to fix one element** | Re-pays every design agent, and invents a *different* city. | Edit the file in `designed/`, re-pack, rebuild from `packed.json`. Costs zero agents. |
+| 4 | **Reading the run files into context** | `packed.json` from the 72-element run is 564 KB — roughly 140k tokens if it lands in context. `designed.json` is 268 KB. | Never `cat` them. Query with `python3 -c` or `jq` and print counts; otherwise let the scripts read them off disk. |
+| 5 | **Per-agent skill loading** | Pointing each agent at the designer skill plus the catalog makes it read ~20 KB before it starts — duplicated N times. | The brief in the generator skill is deliberately self-contained, and sends an agent to the catalog only if it gets stuck. |
+| 6 | **Preview screenshots** | Each image read back costs vision tokens, once per review iteration. | One overhead preview per build. Look once, fix, rebuild. |
+| 7 | **Scene reads** | `scene.get_hierarchy` on a populated scene is large output. | Read it once, when extending an existing city to choose `--origin-x`. |
+
+Weighted for price, the agents and the orchestrator came out roughly equal on
+real work — the 3× gap was commentary. So the lever is **turn count, not agent
+count**.
+
 ### The single-element path
 
 Asking for one thing skips the orchestration entirely. No subagents, no packing,
@@ -282,11 +304,13 @@ can change scale while it is still free.
    outright; quality faults (every building the same height, ideas too thin to
    design from, too few props) are reported to fix first. Fanning out is the
    expensive step, so this is the last cheap moment to catch a mistake.
-4. **Spawns one subagent per idea**, all concurrently. Each designs a shape and
-   writes a JSON file. They never choose a position and never touch Unity.
-5. **Packs the designed shapes** into a street: facades on a common line,
-   alternating sides, props on the strip between kerb and facade, road tiled to
-   span the frontage.
+4. **Spawns one subagent per idea**, in waves of 20 (the concurrency cap). Each
+   designs a shape and writes a JSON file. They never choose a position and
+   never touch Unity.
+5. **Packs the designed shapes** into a street grid: buildings dealt across
+   several east-west streets with facades on a common line, north-south cross
+   streets closing the block, props on the kerb-to-facade strip, road tiled to
+   span every frontage.
 6. **Builds everything in one call** and screenshots it.
 
 ### Run folders
@@ -300,9 +324,9 @@ city-runs/canal-street/
 └── packed.json        everything, positioned
 ```
 
-This is what makes a city reproducible. Designing is the expensive step — a
-six-element street cost roughly 345k tokens of subagent work — so the results
-are kept rather than thrown away. To rebuild exactly, or after editing one
+This is what makes a city reproducible. Designing is the expensive step —
+roughly 446k raw tokens per element designed — so the results are kept rather
+than thrown away. To rebuild exactly, or after editing one
 element:
 
 ```bash
@@ -320,6 +344,9 @@ Note the two different "catalogs": the **recipe catalog** shipped with
 
 Parallelism is in the *designing*. Building is one call because the Unity Editor
 is single-threaded — concurrent builds gain nothing and race on material assets.
+
+For what a run actually costs and which parts of it dominate, see
+[Where the tokens go](#where-the-tokens-go).
 
 ### Driving the builder yourself
 
@@ -351,7 +378,7 @@ R=city-runs/<run>
 python3 .claude/skills/unity-city-generator/scripts/validate_plan.py \
     $R/plan.json --buildings 8 --props 8 --check-scene
 python3 .claude/skills/unity-city-generator/scripts/pack_layout.py \
-    $R/designed.json -o $R/packed.json [--origin-x 0]
+    $R/designed.json -o $R/packed.json [--rows N] [--origin-x 0]
 ```
 
 `validate_plan.py` exits 1 on structural faults (duplicate names, bad kind,
@@ -383,6 +410,10 @@ Two fields carry the geometry:
 - **`size`** is real-world **metres**, not a scale factor.
 - **`at`** is the centre of the part's **bottom face**. `"at": [0,0,0]` sits it
   on the ground. Use `"center"` instead for rotated parts.
+
+An element may also carry `"rotation": [x,y,z]` to turn the whole thing, and
+`"kind"`, whose only effect is that two elements both marked `road` may overlap
+without a warning — that is what an intersection is.
 
 ### Why metres and not scales
 
@@ -502,7 +533,7 @@ ends up inside the geometry.
 ```
 .claude/skills/
 ├── unity-city-generator/
-│   ├── SKILL.md                     read command, invent catalog, fan out, build
+│   ├── SKILL.md                     read command, invent plan, fan out, build
 │   └── scripts/
 │       ├── validate_plan.py         check the plan before spawning agents
 │       └── pack_layout.py           assign positions from real footprints
