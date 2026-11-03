@@ -31,8 +31,13 @@ plan.json ──▶ designer ──▶ spec.json ──▶ element ──▶ geo
 
 Say the numbers you settled on in one line before generating. That is the last
 cheap moment for the user to change scale — counts decide how many agents run,
-which is where nearly all the cost lives. Roughly **$0.50 and 90 seconds per
-building**, designed four at a time.
+which is where nearly all the cost lives. Roughly **$0.01 and 50 seconds per
+building**, designed four at a time (measured: 10 buildings, $0.08, 160s).
+
+Designers run on **Haiku** and in a stripped session - no CLAUDE.md, no hooks,
+no slash commands, three tools. The same run on Opus with a default session
+cost $5.82 and took 392s. Pass `--model sonnet` if a theme needs more
+invention than Haiku gives it.
 
 ## 1. Invent and validate the plan
 

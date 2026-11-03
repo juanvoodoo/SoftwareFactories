@@ -82,9 +82,25 @@ def read_events(run_dir):
     return out
 
 
-DESIGNER_ARGV = ["claude", "-p", "--output-format", "stream-json", "--verbose",
-                 "--allowedTools", "Write", "Bash",
-                 "--permission-mode", "acceptEdits"]
+DESIGNER_MODEL = "haiku"
+
+# A designer writes one JSON file against a contract it is handed in full. It
+# needs three tools and nothing else, so it is started with nothing else:
+# measured, the default session costs 28k of prompt per turn against 5.5k here
+# (29 tool definitions, 118 slash commands, CLAUDE.md and the SessionStart
+# hooks, none of which this task reads). That 22k is re-read on EVERY turn, so
+# it is the single biggest line in a run.
+def _designer_argv(model=DESIGNER_MODEL):
+    return ["claude", "-p", "--output-format", "stream-json", "--verbose",
+            "--model", model,
+            "--tools", "Write,Edit,Bash",
+            "--setting-sources", "",
+            "--strict-mcp-config",
+            "--allowedTools", "Write", "Edit", "Bash",
+            "--permission-mode", "acceptEdits"]
+
+
+DESIGNER_ARGV = _designer_argv()
 
 
 def start_monitor(run_dir, open_browser=True):
@@ -204,9 +220,10 @@ def _design(entry, run_dir, theme, palette, builder_path, timeout, designer_argv
 
 
 def run(run_dir, k=4, gap=GAP, row_length=ROW_LENGTH, timeout=600,
-        builder_path=BUILDER, designer_argv=None, open_monitor=False):
+        builder_path=BUILDER, designer_argv=None, open_monitor=False,
+        model=DESIGNER_MODEL):
     """Design and build continuously until every plan entry is terminal."""
-    designer_argv = designer_argv or (DESIGNER_ARGV + [])
+    designer_argv = designer_argv or _designer_argv(model)
     started = time.time()
     for sub in ("designed", "agents"):
         os.makedirs(os.path.join(run_dir, sub), exist_ok=True)
@@ -218,7 +235,8 @@ def run(run_dir, k=4, gap=GAP, row_length=ROW_LENGTH, timeout=600,
     planned = set(roster)
     theme, palette = plan.get("theme", ""), plan.get("palette", {})
 
-    log(run_dir, "run_started", theme=theme, n=len(entries), k=k, roster=roster)
+    log(run_dir, "run_started", theme=theme, n=len(entries), k=k, roster=roster,
+        model=model)
     if open_monitor:
         log(run_dir, "monitor", url=start_monitor(run_dir))
 
@@ -595,6 +613,8 @@ def main():
     ap.add_argument("--gap", type=float, default=GAP)
     ap.add_argument("--row-length", type=float, default=ROW_LENGTH)
     ap.add_argument("--timeout", type=int, default=600)
+    ap.add_argument("--model", default=DESIGNER_MODEL,
+                    help=f"model for the designers (default {DESIGNER_MODEL})")
     ap.add_argument("--selftest", action="store_true")
     a = ap.parse_args()
 
@@ -604,7 +624,7 @@ def main():
     if not a.run_dir:
         ap.error("a run directory is required (or --selftest)")
     out = run(a.run_dir, k=a.k, gap=a.gap, row_length=a.row_length,
-              timeout=a.timeout, open_monitor=True)
+              timeout=a.timeout, open_monitor=True, model=a.model)
     # The page polls once a second; give it one more poll to catch the final
     # state before this process exits and takes the daemon server with it.
     time.sleep(2)

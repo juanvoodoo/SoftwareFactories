@@ -64,7 +64,8 @@ Keep to at most {max_parts} parts.
 
 Verify ONCE with:
   UNITY_CLI=/nonexistent python3 {builder} {out_path} --dry-run
-and fix anything it refuses. Then report only the path and the part count.
+and fix only what it REFUSES (errors). Warnings are acceptable - do not
+iterate on them. Then report only the path and the part count.
 """
 
 

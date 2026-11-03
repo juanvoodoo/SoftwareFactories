@@ -41,7 +41,7 @@
   <p class="sub" id="status">conectando</p>
   <div class="totals" id="totals"></div>
   <table><thead><tr><th>elemento</th><th>estado</th><th class="n">partes</th>
-    <th class="n">seg</th><th>detalle</th></tr></thead>
+    <th class="n">diseño s</th><th class="n">build s</th><th>detalle</th></tr></thead>
     <tbody id="rows"></tbody></table>
   <h2>eventos</h2>
   <ol id="timeline"></ol>
@@ -61,6 +61,7 @@ function render(evs){
   for (const e of evs){
     const s = st[e.name];
     if (e.ev === "designer_spawned" && s) s.status = "designing";
+    else if (e.ev === "designer_finished" && s) s.design = e.seconds;
     else if (e.ev === "spec_written" && s) s.parts = e.parts;
     else if (e.ev === "element_built" && s)
       Object.assign(s, {status:"built", seconds:e.seconds, parts:e.parts,
@@ -90,7 +91,8 @@ function render(evs){
   $("rows").innerHTML = roster.map(n => {
     const s = st[n];
     return `<tr><td>${esc(n)}</td><td class="${s.status}">${s.status}</td>` +
-           `<td class="n">${s.parts ?? ""}</td><td class="n">${s.seconds ?? ""}</td>` +
+           `<td class="n">${s.parts ?? ""}</td><td class="n">${s.design ?? ""}</td>` +
+           `<td class="n">${s.seconds ?? ""}</td>` +
            `<td class="pending">${esc(s.detail ?? "")}</td></tr>`;
   }).join("");
 
