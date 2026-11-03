@@ -7,7 +7,7 @@ memory. If it is not in a file, it did not happen.
     run_loop.py <run_dir> [--k 4] [--gap 6] [--row-length 200] [--timeout 600]
     run_loop.py --selftest
 """
-import argparse, json, os, shutil, subprocess, sys, tempfile, threading, time
+import argparse, functools, json, os, shutil, subprocess, sys, tempfile, threading, time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 
@@ -79,6 +79,34 @@ def read_events(run_dir):
 DESIGNER_ARGV = ["claude", "-p", "--output-format", "stream-json", "--verbose",
                  "--allowedTools", "Write", "Bash",
                  "--permission-mode", "acceptEdits"]
+
+
+def start_monitor(run_dir, open_browser=True):
+    """Serve the run folder on a loopback port and open the page on it.
+
+    Served rather than handed over as a file:// URL because a page opened from
+    disk cannot fetch a sibling file, and the page's whole job is to re-read
+    events.jsonl every second. The server is a daemon thread, so it dies with
+    the loop and needs no port parsing or cleanup.
+    """
+    import http.server, socketserver, webbrowser
+    here = os.path.dirname(os.path.abspath(__file__))
+    shutil.copyfile(os.path.join(here, "monitor.html"),
+                    os.path.join(run_dir, "monitor.html"))
+
+    class Quiet(http.server.SimpleHTTPRequestHandler):
+        def log_message(self, *a):
+            pass
+
+    handler = functools.partial(Quiet, directory=os.path.abspath(run_dir))
+    httpd = socketserver.ThreadingTCPServer(("127.0.0.1", 0), handler)
+    httpd.daemon_threads = True
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+
+    url = f"http://127.0.0.1:{httpd.server_address[1]}/monitor.html"
+    if open_browser:
+        webbrowser.open(url)
+    return url
 
 
 PROBE = {"name": "__probe__", "materials": {},
@@ -447,6 +475,28 @@ def selftest_loop():
     assert [e["ev"] for e in read_events(d)][-1] == "run_aborted", read_events(d)
 
     print("ok: loop selftest passed (19 checks, no agents, no Editor)")
+    selftest_monitor()
+
+
+def selftest_monitor():
+    import urllib.request
+    d = tempfile.mkdtemp(prefix="fcl-mon-")
+    log(d, "run_started", theme="t", n=2, k=2, roster=["A", "B"])
+    log(d, "element_built", name="A", parts=9, seconds=3.1, position=[5, 0, 0])
+
+    url = start_monitor(d, open_browser=False)
+    assert url.startswith("http://127.0.0.1:"), url
+    page = urllib.request.urlopen(url, timeout=5)
+    assert page.status == 200
+    body = page.read().decode()
+    # A page opened from disk cannot fetch a sibling file, which is the whole
+    # reason this is served rather than handed to the browser as a file:// URL.
+    assert "events.jsonl" in body, body[:200]
+    evs = urllib.request.urlopen(url.rsplit("/", 1)[0] + "/events.jsonl", timeout=5)
+    assert evs.status == 200
+    assert len([l for l in evs.read().decode().splitlines() if l]) == 2
+    assert os.path.exists(os.path.join(d, "monitor.html"))
+    print("ok: monitor selftest passed (6 checks)")
 
 
 def main():
@@ -467,6 +517,9 @@ def main():
         ap.error("a run directory is required (or --selftest)")
     out = run(a.run_dir, k=a.k, gap=a.gap, row_length=a.row_length,
               timeout=a.timeout, open_monitor=True)
+    # The page polls once a second; give it one more poll to catch the final
+    # state before this process exits and takes the daemon server with it.
+    time.sleep(2)
     if out.get("aborted"):
         print("aborted: no Unity Editor on the bridge; no agents were spent",
               file=sys.stderr)

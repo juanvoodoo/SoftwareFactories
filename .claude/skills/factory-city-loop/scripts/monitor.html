@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="es"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Factory run</title>
+<style>
+  :root{--bg:#faf9f7;--fg:#1c1b19;--dim:#6b675f;--line:#e2ded6;--card:#fff;
+        --ok:#2f7d4f;--bad:#b3402f;--work:#9a6b1f;--warn:#b3402f}
+  @media (prefers-color-scheme:dark){:root:not([data-theme=light]){
+    --bg:#16151300;--bg:#161513;--fg:#f0ece4;--dim:#8f8a80;--line:#2c2a26;
+    --card:#201e1b;--ok:#6cc08b;--bad:#e2705c;--work:#d9a441;--warn:#e2705c}}
+  *{box-sizing:border-box}
+  body{margin:0;padding:24px 16px;background:var(--bg);color:var(--fg);
+       font:14px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace}
+  main{max-width:960px;margin:0 auto}
+  h1{font-size:18px;margin:0 0 2px;font-weight:600}
+  .sub{color:var(--dim);margin:0 0 20px}
+  .totals{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:20px}
+  .chip{background:var(--card);border:1px solid var(--line);border-radius:6px;
+        padding:6px 10px}
+  .chip b{font-weight:600}
+  .chip.alarm{border-color:var(--warn);color:var(--warn)}
+  table{width:100%;border-collapse:collapse;background:var(--card);
+        border:1px solid var(--line);border-radius:6px;overflow:hidden}
+  th,td{text-align:left;padding:7px 10px;border-bottom:1px solid var(--line)}
+  th{color:var(--dim);font-weight:500;font-size:12px}
+  tr:last-child td{border-bottom:0}
+  td.n{text-align:right;color:var(--dim)}
+  .pending{color:var(--dim)}
+  .designing{color:var(--work)}
+  .built{color:var(--ok)}
+  .failed{color:var(--bad)}
+  h2{font-size:13px;color:var(--dim);font-weight:500;margin:26px 0 8px}
+  ol{list-style:none;margin:0;padding:0;border:1px solid var(--line);
+     border-radius:6px;background:var(--card);max-height:300px;overflow:auto}
+  li{padding:4px 10px;border-bottom:1px solid var(--line);font-size:12.5px}
+  li:last-child{border-bottom:0}
+  li .t{color:var(--dim)}
+</style></head>
+<body><main>
+  <h1 id="theme">…</h1>
+  <p class="sub" id="status">conectando</p>
+  <div class="totals" id="totals"></div>
+  <table><thead><tr><th>elemento</th><th>estado</th><th class="n">partes</th>
+    <th class="n">seg</th><th>detalle</th></tr></thead>
+    <tbody id="rows"></tbody></table>
+  <h2>eventos</h2>
+  <ol id="timeline"></ol>
+</main>
+<script>
+const $ = id => document.getElementById(id);
+let done = false;
+
+function render(evs){
+  const start = evs.find(e => e.ev === "run_started") || {};
+  const roster = start.roster || [];
+  const st = {}; roster.forEach(n => st[n] = {status:"pending"});
+  let fin = null, aborted = null;
+
+  for (const e of evs){
+    const s = st[e.name];
+    if (e.ev === "designer_spawned" && s) s.status = "designing";
+    else if (e.ev === "spec_written" && s) s.parts = e.parts;
+    else if (e.ev === "element_built" && s)
+      Object.assign(s, {status:"built", seconds:e.seconds, parts:e.parts,
+                        detail:"x=" + (e.position||[])[0]});
+    else if (e.ev === "element_failed" && s)
+      Object.assign(s, {status:"failed", detail:e.reason + (e.message ? " — " + e.message : "")});
+    else if (e.ev === "run_finished") fin = e;
+    else if (e.ev === "run_aborted") aborted = e;
+  }
+
+  $("theme").textContent = start.theme || "factory run";
+  const counts = n => roster.filter(r => st[r].status === n).length;
+  const tokens = fin ? fin.tokens : evs.reduce((a,e) => a + (e.tokens||0), 0);
+  const unplanned = fin ? fin.unplanned : 0;
+
+  $("totals").innerHTML = [
+    `<span class="chip"><b>${roster.length}</b> planeados</span>`,
+    `<span class="chip"><b>${counts("designing")}</b> diseñando</span>`,
+    `<span class="chip"><b>${counts("built")}</b> construidos</span>`,
+    `<span class="chip"><b>${counts("failed")}</b> fallidos</span>`,
+    `<span class="chip">~<b>${tokens.toLocaleString("es")}</b> tokens (aprox)</span>`,
+    `<span class="chip${unplanned ? " alarm" : ""}"><b>${unplanned}</b> no planeados</span>`
+  ].join("");
+
+  $("rows").innerHTML = roster.map(n => {
+    const s = st[n];
+    return `<tr><td>${n}</td><td class="${s.status}">${s.status}</td>` +
+           `<td class="n">${s.parts ?? ""}</td><td class="n">${s.seconds ?? ""}</td>` +
+           `<td class="pending">${s.detail ?? ""}</td></tr>`;
+  }).join("");
+
+  $("timeline").innerHTML = evs.map(e => {
+    const {t, ev, ...rest} = e;
+    return `<li><span class="t">${(t||"").slice(11,19)}</span> ${ev} ` +
+           `<span class="t">${Object.entries(rest).filter(([k])=>k!=="roster")
+             .map(([k,v]) => k+"="+JSON.stringify(v)).join(" ")}</span></li>`;
+  }).join("");
+  $("timeline").scrollTop = $("timeline").scrollHeight;
+
+  if (aborted){ $("status").textContent = "abortado: " + aborted.message; done = true; }
+  else if (fin){ $("status").textContent =
+    `terminado en ${fin.seconds}s — ${fin.built} construidos, ${fin.failed} fallidos`;
+    done = true; }
+  else $("status").textContent = "en marcha";
+}
+
+async function tick(){
+  if (done) return;
+  try{
+    const txt = await (await fetch("events.jsonl", {cache:"no-store"})).text();
+    render(txt.split("\n").filter(Boolean).map(l => {
+      try { return JSON.parse(l); } catch { return null; }   // writer mid-append
+    }).filter(Boolean));
+  }catch(e){ $("status").textContent = "esperando al run…"; }
+}
+tick(); setInterval(tick, 1000);
+</script></body></html>
