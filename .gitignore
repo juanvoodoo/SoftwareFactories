@@ -110,3 +110,4 @@ InitTestScene*.unity*
 
 # Claude city-generator working files (plans, designed specs, packed layouts)
 city-runs/
+factory-runs/

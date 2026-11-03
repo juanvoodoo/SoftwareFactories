@@ -93,7 +93,7 @@ def selftest():
     assert "/r/designed/Lonja.json" in b
     assert "SKILL.md" not in b                   # no agent is sent to read one
     assert "--schema" not in b                   # nor to fetch the schema
-    assert "unity-city" not in b                 # isolation
+    assert "factory-city-element" in b           # isolation: the forked builder
     assert '"position"' not in b                 # placement is not the designer's
     assert "--dry-run" in b                      # but self-checking is
     print("ok: brief selftest passed (10 checks)")
