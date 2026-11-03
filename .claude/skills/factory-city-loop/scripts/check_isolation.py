@@ -19,7 +19,8 @@ NEW_DIRS = ".claude/skills/factory-city-*"
 OLD_DIRS = ".claude/skills/unity-city-*"
 OLD_FILES = [".claude/agents/city-element-designer.md"]
 
-NEW_MUST_NOT_NAME = ["unity-city", "city-runs", "CityKit"]
+NEW_MUST_NOT_NAME = ["unity-city", "city-runs", "CityKit",
+                     "city-element-designer"]
 OLD_MUST_NOT_NAME = ["factory-city", "factory-runs", "FactoryKit"]
 
 

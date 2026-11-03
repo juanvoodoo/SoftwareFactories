@@ -91,6 +91,16 @@ building on top of it.
   at x=0, so a *new* run folder will place buildings on top of geometry an
   earlier run left there. Either reuse the same run folder, which continues the
   row where it stopped, or clear the scene first.
+
+## Running the same folder again
+
+Safe, and the cheapest way to finish a run that came up short. Anything
+`events.jsonl` already records as built is skipped — no agent, no cost — and
+only the failed and the never-attempted get designed. The cursor continues the
+row rather than restarting it, so nothing lands on top of what is there.
+
+To redesign something that did build, delete its `element_built` line from
+`events.jsonl`, or start a new run folder.
 - **Save the scene.** Nothing is persisted unless the user asks.
 
 ## When it aborts

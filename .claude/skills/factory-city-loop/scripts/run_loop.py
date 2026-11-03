@@ -38,12 +38,18 @@ def place(run_dir, bounds, gap=GAP, row_length=ROW_LENGTH):
         cur = {"x": 0.0, "z": 0.0}
 
     width = bounds["max"][0] - bounds["min"][0]
-    # Wrap BEFORE placing, so an element never straddles the end of a row.
+    depth = bounds["max"][2] - bounds["min"][2]
+    # Wrap BEFORE placing, so an element never straddles the end of a row, and
+    # step by the DEEPEST thing in the row just left: a fixed pitch drops the
+    # new row inside the old one the moment anything is deeper than the pitch.
     if cur["x"] > 0 and cur["x"] + width > row_length:
-        cur["x"], cur["z"] = 0.0, cur["z"] + ROW_PITCH
+        cur["x"] = 0.0
+        cur["z"] += max(ROW_PITCH, cur.get("depth", 0.0) + gap)
+        cur["depth"] = 0.0
 
     pos = [round(cur["x"] - bounds["min"][0], 4), 0, round(cur["z"], 4)]
     cur["x"] += width + gap
+    cur["depth"] = max(cur.get("depth", 0.0), depth)
 
     os.makedirs(run_dir, exist_ok=True)
     with open(_cursor_path(run_dir), "w") as f:
@@ -154,9 +160,17 @@ def _design(entry, run_dir, theme, palette, builder_path, timeout, designer_argv
     argv = [a.format(name=name, out=out_path) for a in designer_argv]
     text = build_brief(entry, theme, palette, out_path, builder_path)
 
+    # A spec left by an earlier run in this folder would satisfy the success
+    # check below without this designer having written anything at all.
+    if os.path.exists(out_path):
+        os.unlink(out_path)
+
     killed = []
+    # stderr joins the audit log: when a designer fails to start or dies on an
+    # auth error, its stderr is the only thing that says why, and "if it is not
+    # in a file, it did not happen" has to hold for failures most of all.
     proc = subprocess.Popen(argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                            stderr=subprocess.DEVNULL, text=True)
+                            stderr=subprocess.STDOUT, text=True)
     timer = threading.Timer(timeout, lambda: (killed.append(True), proc.kill()))
     timer.start()
     tokens = 0
@@ -214,12 +228,12 @@ def run(run_dir, k=4, gap=GAP, row_length=ROW_LENGTH, timeout=600,
                     f"check `unity status` and try again. No agents were spent.")
         return {"built": 0, "failed": 0, "aborted": True, "tokens": 0}
 
-    built = failed = tokens = unplanned = 0
+    built = failed = tokens = skipped = 0
+    # Reusing a run folder is the documented way to continue a row, so a resume
+    # must not pay for designs this folder already records as built.
+    already = {e["name"] for e in read_events(run_dir) if e["ev"] == "element_built"}
 
     def spawn(entry):
-        # The census is closed: a name not in the plan is a bug, not a feature.
-        if entry["name"] not in planned:
-            raise AssertionError(f"unplanned agent: {entry['name']}")
         log(run_dir, "designer_spawned", name=entry["name"])
         t0 = time.time()
         res = _design(entry, run_dir, theme, palette, builder_path, timeout,
@@ -231,16 +245,28 @@ def run(run_dir, k=4, gap=GAP, row_length=ROW_LENGTH, timeout=600,
     with ThreadPoolExecutor(max_workers=k) as ex:
         futures = {}
         for e in entries:
-            if e["name"] not in planned:
-                unplanned += 1
+            if e["name"] in already:
+                skipped += 1
+                log(run_dir, "element_skipped", name=e["name"],
+                    reason="already_built")
                 continue
             futures[ex.submit(spawn, e)] = e
 
         # Builds happen HERE, in one thread: the Unity Editor is single-threaded,
         # so a designer finishing mid-build waits its turn rather than racing it.
         for fut in as_completed(futures):
-            res = fut.result()
-            name = res["name"]
+            name = futures[fut]["name"]
+            try:
+                res = fut.result()
+            except Exception as exc:
+                # Same no-retry policy as everything else: one element is lost,
+                # the run is not. Without this a designer that cannot even
+                # start takes the whole run down with no run_finished at all,
+                # and the monitor sits on "designing" forever.
+                failed += 1
+                log(run_dir, "element_failed", name=name,
+                    reason="designer_crashed", message=f"{type(exc).__name__}: {exc}")
+                continue
             tokens += res["tokens"]
             log(run_dir, "designer_finished", name=name, seconds=res["seconds"],
                 tokens=res["tokens"], ok=res["ok"])
@@ -286,10 +312,18 @@ def run(run_dir, k=4, gap=GAP, row_length=ROW_LENGTH, timeout=600,
                     reason=err.get("code", "build_failed"),
                     message=err.get("message", ""), seconds=secs)
 
+    # Counted from what is ON DISK, not from the list the spawns were drawn
+    # from: a check over its own input proves nothing. One agent log per plan
+    # entry and not one more is the claim, so count the logs.
+    agent_dir = os.path.join(run_dir, "agents")
+    unplanned = sum(1 for f in os.listdir(agent_dir)
+                    if f.endswith(".jsonl") and f[:-6] not in planned)
+
     log(run_dir, "run_finished", built=built, failed=failed, tokens=tokens,
-        unplanned=unplanned, seconds=round(time.time() - started, 2))
+        skipped=skipped, unplanned=unplanned,
+        seconds=round(time.time() - started, 2))
     return {"built": built, "failed": failed, "tokens": tokens,
-            "unplanned": unplanned, "aborted": False}
+            "skipped": skipped, "unplanned": unplanned, "aborted": False}
 
 
 # --------------------------------------------------------------------------
@@ -314,6 +348,13 @@ def selftest():
     assert p[2] != 0.0, p          # wrapped to a new row
     assert p[0] == 90.0, p         # and restarted at the row's left edge
 
+    # A row pitch that ignores depth drops row 2 inside row 1.
+    d2 = tempfile.mkdtemp(prefix="fcl-deep-")
+    deep = {"min": [-5, 0, -30], "max": [5, 6, 30]}      # 60 m deep
+    place(d2, deep)
+    wide2 = {"min": [-100, 0, -4], "max": [100, 6, 4]}   # 200 m wide: forces a wrap
+    assert place(d2, wide2, row_length=ROW_LENGTH)[2] == 66.0, "row 2 sits in row 1"
+
     log(d, "run_started", theme="x", n=2)
     log(d, "element_built", name="A", seconds=3.1)
     evs = read_events(d)
@@ -327,7 +368,7 @@ def selftest():
         f.write('{"ev": "trunc')
     assert len(read_events(d)) == 2
 
-    print("ok: cursor and event log selftest passed (11 checks)")
+    print("ok: cursor and event log selftest passed (12 checks)")
     selftest_loop()
 
 
@@ -351,6 +392,7 @@ else:
     json.dump({"name": name, "materials": {"C": "#A8A49BFF"},
                "parts": [{"name": "Body", "primitive": "cube", "material": "C",
                           "size": [10, 6, 8], "at": [0, 0, 0]}]}, open(out, "w"))
+sys.stderr.write("fake-designer-diagnostic\n")
 print(json.dumps({"type": "result", "subtype": "success",
                   "usage": {"input_tokens": 10, "output_tokens": 20,
                             "cache_read_input_tokens": 100,
@@ -474,7 +516,53 @@ def selftest_loop():
     assert os.listdir(os.path.join(d, "agents")) == [], "agents were spent"
     assert [e["ev"] for e in read_events(d)][-1] == "run_aborted", read_events(d)
 
-    print("ok: loop selftest passed (19 checks, no agents, no Editor)")
+    # A stale spec from an earlier run must not be mistaken for this run's
+    # work. Reusing a run folder is the documented way to continue a row, so
+    # this is the path the no_spec and timeout checks have to survive.
+    d, b, argv = _fixture(n=2)
+    run(d, k=2, builder_path=b, designer_argv=argv)
+    assert _counts(d) == {"built": 2, "failed": 0}, _counts(d)
+    argv2 = list(argv); argv2[2] = "nothing"
+    os.remove(os.path.join(d, "events.jsonl"))      # forget what was built
+    run(d, k=2, builder_path=b, designer_argv=argv2)
+    assert _reason(d) == ["no_spec"], ("stale spec read as success", _reason(d))
+
+    # And a resume that remembers must not re-spend agents on what is built.
+    d, b, argv = _fixture(n=3)
+    run(d, k=2, builder_path=b, designer_argv=argv)
+    before = {f: os.path.getmtime(os.path.join(d, "agents", f))
+              for f in os.listdir(os.path.join(d, "agents"))}
+    out = run(d, k=2, builder_path=b, designer_argv=argv)
+    assert out["skipped"] == 3 and out["built"] == 0, out
+    after = {f: os.path.getmtime(os.path.join(d, "agents", f))
+             for f in os.listdir(os.path.join(d, "agents"))}
+    assert before == after, "agents were re-spent on already-built elements"
+
+    # I1: a designer that cannot even start is one failed element, not a dead
+    # run. The run must still finish and still write run_finished.
+    d, b, argv = _fixture(n=2)
+    run(d, k=2, builder_path=b,
+        designer_argv=["/definitely/not/here", "{name}", "{out}"])
+    assert _counts(d) == {"built": 0, "failed": 2}, _counts(d)
+    assert _reason(d) == ["designer_crashed"] * 2, _reason(d)
+    assert read_events(d)[-1]["ev"] == "run_finished", read_events(d)[-1]
+
+    # I2: whatever a designer says on stderr is the only clue when it fails,
+    # so it belongs in the audit log, not in /dev/null.
+    d, b, argv = _fixture(n=1)
+    run(d, k=1, builder_path=b, designer_argv=argv)
+    assert "fake-designer-diagnostic" in \
+        open(os.path.join(d, "agents", "B_1.jsonl")).read()
+
+    # The unplanned counter must be an independent observation of what ran,
+    # not a tautology over the list it was built from.
+    d, b, argv = _fixture(n=2)
+    run(d, k=2, builder_path=b, designer_argv=argv)
+    open(os.path.join(d, "agents", "Ghost.jsonl"), "w").close()
+    out = run(d, k=2, builder_path=b, designer_argv=argv)
+    assert out["unplanned"] == 1, ("a stray agent log went uncounted", out)
+
+    print("ok: loop selftest passed (28 checks, no agents, no Editor)")
     selftest_monitor()
 
 
@@ -524,7 +612,8 @@ def main():
         print("aborted: no Unity Editor on the bridge; no agents were spent",
               file=sys.stderr)
         return 1
-    print(f"{out['built']} built, {out['failed']} failed, "
+    extra = f", {out['skipped']} already built" if out["skipped"] else ""
+    print(f"{out['built']} built, {out['failed']} failed{extra}, "
           f"~{out['tokens']:,} tokens (approx)")
     return 0 if out["built"] else 1
 

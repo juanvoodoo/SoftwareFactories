@@ -107,7 +107,11 @@ def unity(command, params, timeout=180):
     args = [UNITY, "--no-banner", "--non-interactive", "--json", "cmd", command]
     for k, v in params.items():
         args += [f"--{k}", v if isinstance(v, str) else json.dumps(v)]
-    proc = subprocess.run(args, capture_output=True, text=True, timeout=timeout)
+    try:
+        proc = subprocess.run(args, capture_output=True, text=True,
+                              timeout=timeout)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise SpecError(f"{command}: cannot reach the Unity CLI at {UNITY}: {exc}")
     try:
         payload = json.loads(proc.stdout)
     except json.JSONDecodeError:
@@ -120,9 +124,15 @@ def unity(command, params, timeout=180):
 
 def preflight():
     """An Editor that isn't ready turns every later call into noise, so check once."""
-    proc = subprocess.run(
-        [UNITY, "--no-banner", "--non-interactive", "--json", "status"],
-        capture_output=True, text=True, timeout=30)
+    try:
+        proc = subprocess.run(
+            [UNITY, "--no-banner", "--non-interactive", "--json", "status"],
+            capture_output=True, text=True, timeout=30)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        # A missing or hung CLI binary is "cannot reach the Editor" too. If it
+        # escapes as an OSError instead, a caller's preflight reads it as
+        # success and spends a whole run of agents before finding out.
+        raise SpecError(f"cannot reach the Unity CLI at {UNITY}: {exc}")
     try:
         instances = json.loads(proc.stdout)["data"]["instances"]
     except Exception:
@@ -630,9 +640,24 @@ def selftest():
 
     # Materials land in their own folder, not the one the old builder uses.
     assert "FactoryKit/Materials" in SCHEMA, SCHEMA
+
+    # A missing or hung Unity CLI binary is "cannot reach the Editor" too, and
+    # must exit 3 like any other unreachable Editor. Anything else makes a
+    # caller's preflight think the Editor is fine and spend a whole run.
+    import tempfile as _tf
+    with _tf.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
+        json.dump({"name": "T", "materials": {"C": "#A8A49BFF"},
+                   "parts": [_cube("B", "C", [2, 2, 2], [0, 0, 0])]}, f)
+        probe = f.name
+    r = subprocess.run([sys.executable, os.path.abspath(__file__), probe,
+                        "--json"], capture_output=True, text=True,
+                       env=dict(os.environ, UNITY_CLI="/definitely/not/here"))
+    os.unlink(probe)
+    assert r.returncode == 3, (r.returncode, r.stdout[-300:], r.stderr[-300:])
+    assert "editor_unavailable" in r.stdout, r.stdout
     assert PALETTE_DIR == "FactoryKit/Materials"
 
-    print("ok: builder selftest passed (5 checks, no Editor)")
+    print("ok: builder selftest passed (7 checks, no Editor)")
 
 
 def main():

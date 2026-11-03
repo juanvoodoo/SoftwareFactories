@@ -48,6 +48,8 @@
 </main>
 <script>
 const $ = id => document.getElementById(id);
+// Builder messages carry "<" and ">"; unescaped they eat the rest of the page.
+const esc = v => String(v).replace(/[&<>]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));
 let done = false;
 
 function render(evs){
@@ -65,6 +67,8 @@ function render(evs){
                         detail:"x=" + (e.position||[])[0]});
     else if (e.ev === "element_failed" && s)
       Object.assign(s, {status:"failed", detail:e.reason + (e.message ? " — " + e.message : "")});
+    else if (e.ev === "element_skipped" && s)
+      Object.assign(s, {status:"built", detail:"ya construido en un run anterior"});
     else if (e.ev === "run_finished") fin = e;
     else if (e.ev === "run_aborted") aborted = e;
   }
@@ -85,16 +89,16 @@ function render(evs){
 
   $("rows").innerHTML = roster.map(n => {
     const s = st[n];
-    return `<tr><td>${n}</td><td class="${s.status}">${s.status}</td>` +
+    return `<tr><td>${esc(n)}</td><td class="${s.status}">${s.status}</td>` +
            `<td class="n">${s.parts ?? ""}</td><td class="n">${s.seconds ?? ""}</td>` +
-           `<td class="pending">${s.detail ?? ""}</td></tr>`;
+           `<td class="pending">${esc(s.detail ?? "")}</td></tr>`;
   }).join("");
 
   $("timeline").innerHTML = evs.map(e => {
     const {t, ev, ...rest} = e;
     return `<li><span class="t">${(t||"").slice(11,19)}</span> ${ev} ` +
            `<span class="t">${Object.entries(rest).filter(([k])=>k!=="roster")
-             .map(([k,v]) => k+"="+JSON.stringify(v)).join(" ")}</span></li>`;
+             .map(([k,v]) => k+"="+esc(JSON.stringify(v))).join(" ")}</span></li>`;
   }).join("");
   $("timeline").scrollTop = $("timeline").scrollHeight;
 
